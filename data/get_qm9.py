@@ -82,19 +82,19 @@ def preprocess(raw_data, dataset):
 if __name__ == "__main__":
     # download   
     download_path = 'dsgdb9nsd.xyz.tar.bz2'
-    if not os.path.exists(download_path):
-        print('downloading data to %s ...' % download_path)
-        source = 'https://ndownloader.figshare.com/files/3195389'
-        os.system('wget -O %s %s' % (download_path, source))
-        print('finished downloading')
-        
+    # if not os.path.exists(download_path):
+    #     print('downloading data to %s ...' % download_path)
+    #     source = 'https://ndownloader.figshare.com/files/3195389'
+    #     os.system('wget -O %s %s' % (download_path, source))
+    #     print('finished downloading')
+    #
     # unzip
     unzip_path = 'qm9_raw'
-    if not os.path.exists(unzip_path):
-        print('extracting data to %s ...' % unzip_path)
-        os.mkdir(unzip_path)
-        os.system('tar xvjf %s -C %s' % (download_path, unzip_path))
-        print('finished extracting')
+    # if not os.path.exists(unzip_path):
+    #     print('extracting data to %s ...' % unzip_path)
+    #     os.mkdir(unzip_path)
+    #     os.system('tar xvjf %s -C %s' % (download_path, unzip_path))
+    #     print('finished extracting')
       
-    # raw_data = train_valid_split(unzip_path)
-    # preprocess(raw_data, dataset)
+    raw_data = train_valid_split(unzip_path)
+    preprocess(raw_data, dataset)

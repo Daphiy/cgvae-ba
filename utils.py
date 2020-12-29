@@ -4,14 +4,13 @@ import tensorflow as tf
 import queue
 import threading
 import pickle
-from rdkit.Chem import AllChem
-from rdkit.Chem import Draw
+# from rdkit.Chem import AllChem
+# from rdkit.Chem import Draw
 from rdkit import Chem
-from rdkit.Chem import rdmolops
 from collections import defaultdict, deque
 import os
-from rdkit.Chem import Crippen
-from rdkit.Chem import QED
+# from rdkit.Chem import Crippen
+# from rdkit.Chem import QED
 
 SMALL_NUMBER = 1e-7
 LARGE_NUMBER= 1e10
@@ -20,10 +19,28 @@ geometry_numbers=[3, 4, 5, 6] # triangle, square, pentagen, hexagon
 
 # bond mapping
 bond_dict = {'SINGLE': 0, 'DOUBLE': 1, 'TRIPLE': 2, "AROMATIC": 3}
-number_to_bond= {0: Chem.rdchem.BondType.SINGLE, 1:Chem.rdchem.BondType.DOUBLE, 
+number_to_bond= {0: Chem.rdchem.BondType.SINGLE, 1:Chem.rdchem.BondType.DOUBLE,
                  2: Chem.rdchem.BondType.TRIPLE, 3:Chem.rdchem.BondType.AROMATIC}
 
+
+def freeze_graph_model(sess, trainable_vars):
+        graph_vars = set(sess.graph.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope="graph_model"))
+        filtered_vars = []
+        for var in trainable_vars:
+            if var not in graph_vars:
+                filtered_vars.append(var)
+            else:
+                print("Freezing weights of variable %s." % var.name)
+        trainable_vars = filtered_vars
+        return trainable_vars
+
 def dataset_info(dataset): #qm9, zinc, cep
+    if dataset == 'ba':
+        return { 'atom_types': ["C"],
+                 'maximum_valence': {0: 10000},
+                 'number_to_atom': {0: "C"},
+                 'bucket_sizes': np.array(list(range(4, 28, 2)) + [29])
+               }
     if dataset=='qm9':
         return { 'atom_types': ["H", "C", "N", "O", "F"],
                  'maximum_valence': {0: 1, 1: 4, 2: 3, 3: 2, 4: 1},
@@ -230,16 +247,13 @@ def get_initial_valence(node_symbol, dataset):
     return [dataset_info(dataset)['maximum_valence'][s] for s in node_symbol]
 
 def add_atoms(new_mol, node_symbol, dataset):
+    from rdkit import Chem
     for number in node_symbol:
         if dataset=='qm9' or dataset=='cep':
             idx=new_mol.AddAtom(Chem.Atom(dataset_info(dataset)['number_to_atom'][number]))
-        elif dataset=='zinc':
-            new_atom = Chem.Atom(dataset_info(dataset)['number_to_atom'][number])            
-            charge_num=int(dataset_info(dataset)['atom_types'][number].split('(')[1].strip(')'))
-            new_atom.SetFormalCharge(charge_num)
-            new_mol.AddAtom(new_atom)
 
 def visualize_mol(path, new_mol):
+    from rdkit.Chem import AllChem,Draw
     AllChem.Compute2DCoords(new_mol)
     print(path)
     Draw.MolToFile(new_mol,path)
@@ -248,7 +262,8 @@ def get_idx_of_largest_frag(frags):
     return np.argmax([len(frag) for frag in frags])
 
 def remove_extra_nodes(new_mol):
-    frags=Chem.rdmolops.GetMolFrags(new_mol)
+    from rdkit import Chem
+    frags= Chem.rdmolops.GetMolFrags(new_mol)
     while len(frags) > 1:
         # Get the idx of the frag with largest length
         largest_idx = get_idx_of_largest_frag(frags)
@@ -338,12 +353,13 @@ def count_atoms(dataset):
 
 
 def to_graph(smiles, dataset):
+    from rdkit import Chem
     mol = Chem.MolFromSmiles(smiles)
     if mol is None:
         return [], []
     # Kekulize it
     if need_kekulize(mol):
-        rdmolops.Kekulize(mol)
+        Chem.rdmolops.Kekulize(mol)
         if mol is None:
             return None, None
     # remove stereo information, such as inward and outward edges
@@ -380,6 +396,7 @@ def check_uniqueness(dataset):
     return new_num/original_num
 
 def shape_count(dataset, remove_print=False, all_smiles=None):
+    from rdkit import Chem
     if all_smiles==None:
         with open('generated_smiles_%s' % dataset, 'rb') as f:
             all_smiles=set(pickle.load(f)) 
@@ -626,9 +643,9 @@ def sssr_metric(dataset):
 # select the best based on shapes and probs
 def select_best(all_mol):
     # sort by shape
-    all_mol=sorted(all_mol)
-    best_shape=all_mol[-1][0]
-    all_mol=[(p, m) for s, p, m in all_mol if s==best_shape]
+    all_mol = sorted(all_mol)
+    best_shape = all_mol[-1][0]
+    all_mol = [(p, m) for s, p, m in all_mol if s==best_shape]
     # sort by probs
     all_mol=sorted(all_mol)
     return all_mol[-1][1]

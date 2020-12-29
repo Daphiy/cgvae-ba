@@ -92,11 +92,12 @@ def update_one_step(overlapped_edge_features, distance_to_others,node_sequence, 
     distances = [(start, node, params["truncate_distance"]) if d > params["truncate_distance"] else (start, node, d) for start, node, d in distances]
     distance_to_others.append(distances)
     # Calculate the overlapped edge mask
-    overlapped_edge_features.append(get_overlapped_edge_feature(edge_mask, color, new_mol))
+    #overlapped_edge_features.append(get_overlapped_edge_feature(edge_mask, color, new_mol))
     # update the incremental adj mat at this step
     incremental_adj_mat.append(deepcopy(up_to_date_adj_mat))
 
 def construct_incremental_graph(dataset, edges, max_n_vertices, real_n_vertices, node_symbol, params, initial_idx=0):
+    from rdkit import Chem
     # avoid calculating this if it is just for generating new molecules for speeding up
     if params["generation"]:
         return [], [], [], [], [], [], [], [], []
@@ -139,11 +140,11 @@ def construct_incremental_graph(dataset, edges, max_n_vertices, real_n_vertices,
     local_stop=[]
     # record the incremental molecule
     new_mol = Chem.MolFromSmiles('')
-    new_mol = Chem.rdchem.RWMol(new_mol)
+    # new_mol = Chem.rdchem.RWMol(new_mol)
     # Add atoms
-    add_atoms(new_mol, sample_node_symbol([node_symbol], [len(node_symbol)], dataset)[0], dataset)
+    # add_atoms(new_mol, sample_node_symbol([node_symbol], [len(node_symbol)], dataset)[0], dataset)
     # calculate keep probability
-    sample_transition_count= real_n_vertices + len(edges)/2
+    sample_transition_count = real_n_vertices + len(edges)/2
     keep_prob= float(sample_transition_count)/((real_n_vertices + len(edges)/2) * params["bfs_path_count"])   # to form a binomial distribution
     while len(queue) > 0:
         node_in_focus=queue.popleft()
@@ -167,15 +168,18 @@ def construct_incremental_graph(dataset, edges, max_n_vertices, real_n_vertices,
                 valences[node_in_focus]-=(edge_type + 1)
                 valences[neighbor]-=(edge_type + 1)
                 # update the incremental mol
-                new_mol.AddBond(int(node_in_focus), int(neighbor), number_to_bond[edge_type])
+                #new_mol.AddBond(int(node_in_focus), int(neighbor), number_to_bond[edge_type])
             # Explore neighbor nodes
             if color[neighbor]==0:
                 queue.append(neighbor)
                 color[neighbor]=1
         # local stop here. We move on to another node for exploration or stop completely
-        update_one_step(overlapped_edge_features, distance_to_others,node_sequence, node_in_focus, None, None, edge_type_masks, 
+        update_one_step(overlapped_edge_features, distance_to_others,node_sequence,
+                        node_in_focus, None, None, edge_type_masks,
                         valences, incremental_adj_mat, color, real_n_vertices, graph,
-                        edge_type_labels, local_stop, edge_masks, edge_labels, True, params, params["check_overlap_edge"], new_mol, up_to_date_adj_mat,keep_prob)
+                        edge_type_labels, local_stop, edge_masks, edge_labels, True,
+                        params, params["check_overlap_edge"],
+                        new_mol, up_to_date_adj_mat,keep_prob)
         color[node_in_focus]=2
         
-    return incremental_adj_mat,distance_to_others,node_sequence,edge_type_masks,edge_type_labels,local_stop, edge_masks, edge_labels, overlapped_edge_features
+    return incremental_adj_mat,distance_to_others,node_sequence,edge_type_masks, edge_type_labels,local_stop, edge_masks, edge_labels
