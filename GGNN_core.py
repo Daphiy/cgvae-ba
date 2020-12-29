@@ -18,9 +18,9 @@ class ChemModel(object):
 
         }
 
-    def __init__(self, args):
+    def __init__(self, args,dataset='ba',batch_size=64,num_epochs=10,hidden_size=10,lr=0.001,kl_trade_off_lambda=0.3,optimization_step=0):
         self.args = args
-
+        self.dataset = dataset = 'ba'
         # Collect argument things:
         data_dir = ''
         if '--data_dir' in args and args['--data_dir'] is not None:
@@ -28,10 +28,17 @@ class ChemModel(object):
         self.data_dir = data_dir
 
         # Collect parameters:
-        params = self.default_params()
-        self.params = params
-
-        # Get which dataset in use
+        self.params = params = self.default_params()
+        # self.params['batch_size'] = batch_size
+        # self.params['num_epochs'] = num_epochs
+        # self.params['epoch_to_generate'] = num_epochs
+        # self.params['hidden_size'] = hidden_size
+        # self.params['lr'] = lr
+        # self.params['kl_trade_off_lambda'] = kl_trade_off_lambda
+        # self.params['optimization_step'] = optimization_step
+        # self.params['train_file'] = params['train_file'] = 'data/molecules_train_%s.json' % self.dataset
+        # self.params['valid_file'] = params['valid_file'] = 'data/molecules_valid_%s.json' % self.dataset
+        # # Get which dataset in use
         self.params['dataset'] = dataset = "ba"#"qm9"#args.get('--dataset')
         # Number of atom types of this dataset
         self.params['num_symbols'] = 1#len(dataset_info(dataset)["atom_types"])
@@ -145,6 +152,7 @@ class ChemModel(object):
         self.ops['mean'], self.ops['logvariance'] = self.compute_mean_and_logvariance()
         # Sample from a gaussian distribution according to the mean and log variance
         self.ops['z_sampled'] = self.sample_with_mean_and_logvariance()
+
         # Construct logit matrices for both edges and edge types
         self.construct_logit_matrices()
 
@@ -222,11 +230,14 @@ class ChemModel(object):
                 fetch_list = [self.ops['loss'], self.ops['train_step'],
                               self.ops["edge_loss"], self.ops['kl_loss'],
                               #self.ops['node_symbol_prob'], self.placeholders['node_symbols'],
-                              self.ops['qed_computed_values'], self.placeholders['target_values'],
-                              self.ops['total_qed_loss'],
+                              #self.ops['qed_computed_values'], 
+                              self.placeholders['target_values'],
+                              #self.ops['total_qed_loss'],
                               self.ops['mean'], self.ops['logvariance'],
                               self.ops['grads'], self.ops['mean_edge_loss'], #self.ops['mean_node_symbol_loss'],
-                              self.ops['mean_kl_loss'], self.ops['mean_total_qed_loss']]
+                              self.ops['mean_kl_loss'], 
+                              #self.ops['mean_total_qed_loss']
+                              ]
             else:
                 batch_data[self.placeholders['out_layer_dropout_keep_prob']] = 1.0
                 fetch_list = [self.ops['mean_edge_loss'], self.ops['accuracy_task0']]
@@ -280,6 +291,7 @@ class ChemModel(object):
                     self.save_model(str(epoch) + ("_%s.pickle" % (self.params["dataset"])))
                 # Run epoches for graph generation
                 if epoch >= self.params['epoch_to_generate']:
+                    
                     self.generate_new_graphs(self.train_data)
 
     def save_model(self, path: str) -> None:
