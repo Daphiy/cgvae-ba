@@ -13,7 +13,7 @@ Options:
     --freeze-graph-model     Freeze weights of graph model components
 """
 from typing import Sequence, Any
-from docopt import docopt
+#from docopt import docopt
 from collections import defaultdict, deque
 import numpy as np
 import tensorflow as tf
@@ -49,9 +49,10 @@ h:      GNN hidden size
 
 
 class DenseGGNNChemModel(ChemModel):
-    def __init__(self, args):
-        super().__init__(args)
-
+    def __init__(self, args, dataset='ba',batch_size=64,num_epochs=10,hidden_size=10,lr=0.001,kl_trade_off_lambda=0.3,optimization_step=0):
+        super().__init__(args,dataset='ba',batch_size=64,num_epochs=10,hidden_size=10,lr=0.001,kl_trade_off_lambda=0.3,optimization_step=0)
+        self.dataset = dataset
+ 
     @classmethod
     def default_params(cls):
         params = dict(super().default_params())
@@ -67,14 +68,14 @@ class DenseGGNNChemModel(ChemModel):
 
             'random_seed': 0,  # fixed for reproducibility
 
-            'batch_size': 8 if dataset == 'zinc' or dataset == 'cep' else 64,
+            'batch_size': 64,
             "qed_trade_off_lambda": 10,
             'prior_learning_rate': 0.05,
             'stop_criterion': 0.01,
-            'num_epochs': 3 if dataset == 'zinc' or dataset == 'cep' else 10,
-            'epoch_to_generate': 3 if dataset == 'zinc' or dataset == 'cep' else 10,
+            'num_epochs': 4,
+            'epoch_to_generate': 4,
             'number_of_generation': 30000,
-            'optimization_step': 0,
+            'optimization_step': 1,
             'maximum_distance': 50,
             "use_argmax_generation": False,  # use random sampling or argmax during generation
             'residual_connection_on': True,  # whether residual connection is on
@@ -88,15 +89,14 @@ class DenseGGNNChemModel(ChemModel):
                 14: [0, 2, 4, 6, 8, 10, 12],
             },
             'num_timesteps': 12,  # gnn propagation step
-            'hidden_size': 100,
+            'hidden_size': 10, #10
             "kl_trade_off_lambda": 0.3,  # kl tradeoff
             'learning_rate': 0.001,
             'graph_state_dropout_keep_prob': 1,
             "compensate_num": 1,  # how many atoms to be added during generation
 
-            'train_file': 'data/molecules_train_%s.json' % dataset,
-            'valid_file': 'data/molecules_valid_%s.json' % dataset,
-
+            'train_file' : 'data/molecules_train_%s.json' % dataset,
+            'valid_file' : 'data/molecules_valid_%s.json' % dataset,
             'try_different_starting': True,
             "num_different_starting": 6,
 
@@ -565,19 +565,19 @@ class DenseGGNNChemModel(ChemModel):
                                                                                 self.placeholders[
                                                                                     'out_layer_dropout_keep_prob'])
                 normalized_z_sampled = tf.nn.l2_normalize(self.ops['z_sampled'], 2)
-                self.ops['qed_computed_values'] = computed_values = self.gated_regression(normalized_z_sampled,
-                                                                                          self.weights[
-                                                                                              'regression_gate_task%i' % task_id],
-                                                                                          self.weights[
-                                                                                              'regression_transform_task%i' % task_id],
-                                                                                          self.params["hidden_size"],
-                                                                                          self.weights['qed_weights'],
-                                                                                          self.weights['qed_biases'],
-                                                                                          self.placeholders[
-                                                                                              'num_vertices'],
-                                                                                          self.placeholders[
-                                                                                              'node_mask'])
-                diff = computed_values - self.placeholders['target_values'][internal_id, :]  # [b]
+                #self.ops['qed_computed_values'] = computed_values = self.gated_regression(normalized_z_sampled,
+                #                                                                          self.weights[
+                #                                                                              'regression_gate_task%i' % task_id],
+                #                                                                          self.weights[
+                #                                                                              'regression_transform_task%i' % task_id],
+                #                                                                          self.params["hidden_size"],
+                #                                                                          self.weights['qed_weights'],
+                #                                                                          self.weights['qed_biases'],
+                #                                                                          self.placeholders[
+                #                                                                              'num_vertices'],
+                #                                                                          self.placeholders[
+                #                                                                              'node_mask'])
+                diff  = - self.placeholders['target_values'][internal_id, :]  # + computed_values # [b]
                 task_target_mask = self.placeholders['target_mask'][internal_id, :]
                 task_target_num = tf.reduce_sum(task_target_mask) + SMALL_NUMBER
                 diff = diff * task_target_mask  # Mask out unused values [b]
@@ -585,23 +585,22 @@ class DenseGGNNChemModel(ChemModel):
                 task_loss = tf.reduce_sum(0.5 * tf.square(diff)) / task_target_num  # number
                 # Normalise loss to account for fewer task-specific examples in batch:
                 task_loss = task_loss * (1.0 / (self.params['task_sample_ratios'].get(task_id) or 1.0))
-                self.ops['qed_loss'].append(task_loss)
+                #self.ops['qed_loss'].append(task_loss)
                 if task_id == 0:  # Assume it is the QED score
                     z_sampled_shape = tf.shape(self.ops['z_sampled'])
                     flattened_z_sampled = tf.reshape(self.ops['z_sampled'], [z_sampled_shape[0], -1])
                     self.ops['l2_loss'] = 0.01 * tf.reduce_sum(flattened_z_sampled * flattened_z_sampled, axis=1) / 2
                     # Calculate the derivative with respect to QED + l2 loss
-                    self.ops['derivative_z_sampled'] = tf.gradients(self.ops['qed_computed_values'] -
-                                                                    self.ops['l2_loss'], self.ops['z_sampled'])
-        self.ops['total_qed_loss'] = tf.reduce_sum(self.ops['qed_loss'])  # number
+                    self.ops['derivative_z_sampled'] = tf.gradients(
+                        #self.ops['qed_computed_values'] 
+                                                                   - self.ops['l2_loss'], self.ops['z_sampled'])
+        #self.ops['total_qed_loss'] = tf.reduce_sum(self.ops['qed_loss'])  # number
         self.ops['mean_edge_loss'] = tf.reduce_mean(self.ops["edge_loss"])  # record the mean edge loss
         #self.ops['mean_node_symbol_loss'] = tf.reduce_mean(self.ops["node_symbol_loss"])
         self.ops['mean_kl_loss'] = tf.reduce_mean(kl_trade_off_lambda * self.ops['kl_loss'])
-        self.ops['mean_total_qed_loss'] = self.params["qed_trade_off_lambda"] * self.ops['total_qed_loss']
+        #self.ops['mean_total_qed_loss'] = self.params["qed_trade_off_lambda"] * self.ops['total_qed_loss']
         #+ self.ops['node_symbol_loss']
-        return tf.reduce_mean(self.ops["edge_loss"]  + \
-                              kl_trade_off_lambda * self.ops['kl_loss']) \
-               + self.params["qed_trade_off_lambda"] * self.ops['total_qed_loss']
+        return tf.reduce_mean(self.ops["edge_loss"]  +  kl_trade_off_lambda * self.ops['kl_loss']) 
 
     def gated_regression(self, last_h,
                          regression_gate,
@@ -658,7 +657,7 @@ class DenseGGNNChemModel(ChemModel):
                 #nodes_no_master, edges_no_master = to_graph(data_point['smiles'], self.params["dataset"])
 
                 incremental_adj_mat, distance_to_others, node_sequence, edge_type_masks, edge_type_labels, local_stop, edge_masks, edge_labels = \
-                    construct_incremental_graph(dataset, edges_no_master, chosen_bucket_size,
+                    construct_incremental_graph(self.dataset, edges_no_master, chosen_bucket_size,
                                                 len(nodes_no_master), nodes_no_master, self.params,
                                                 initial_idx=starting_idx)
                 if self.params["sample_transition"] and list_idx > 0:
@@ -950,21 +949,24 @@ class DenseGGNNChemModel(ChemModel):
         # record how many optimization steps are taken
         step = 0
         # generate a new molecule
-        self.generate_graph_with_state(random_normal_states, num_vertices, generated_all_similes, elements, step, count)
-        fetch_list = [self.ops['derivative_z_sampled'], self.ops['qed_computed_values'], self.ops['l2_loss']]
+        #self.generate_graph_with_state(random_normal_states, num_vertices, generated_all_similes, elements, step, count)
+        fetch_list = [self.ops['derivative_z_sampled'], self.ops['l2_loss']]
+        print('Optimization step:' ,self.params['optimization_step'])
         for _ in range(self.params['optimization_step']):
+            print("Entered!")
             # get current qed and derivative
             batch_feed_dict = self.get_dynamic_feed_dict(elements, None, None, num_vertices, None,
                                                          None, None, None, None,
                                                          random_normal_states)
-            derivative_z_sampled, qed_computed_values, l2_loss = self.sess.run(fetch_list, feed_dict=batch_feed_dict)
+            derivative_z_sampled, l2_loss = self.sess.run(fetch_list, feed_dict=batch_feed_dict)
             # update the states
             random_normal_states = self.gradient_ascent(random_normal_states,
                                                         derivative_z_sampled[0])
+                                                    
             # generate a new molecule
             step += 1
-            self.generate_graph_with_state(random_normal_states, num_vertices,
-                                           generated_all_similes, elements, step, count)
+            #self.generate_graph_with_state(random_normal_states, num_vertices,
+            #                               generated_all_similes, elements, step, count)
         return random_normal_states
 
     def generate_graph_with_state(self, random_normal_states, num_vertices,
@@ -1005,14 +1007,14 @@ class DenseGGNNChemModel(ChemModel):
                                                                         [], real_length,
                                                                         random_normal_states, elements, num_vertices)
             # record the molecule with largest number of shapes
-            if dataset == 'qm9' and new_mol is not None:
+            if self.dataset == 'qm9' and new_mol is not None:
                 all_mol.append((
                     np.sum(shape_count(self.params["dataset"], True,[Chem.MolToSmiles(new_mol)])[1]),
                     total_log_prob,
                     new_mol
                 ))
             # record the molecule with largest number of pentagon and hexagonal for zinc and cep
-            elif dataset == 'ba':
+            elif self.dataset == 'ba':
                 all_mol.append((0, total_log_prob, new_mol))
         # select one out
         best_mol = select_best(all_mol)
@@ -1020,13 +1022,13 @@ class DenseGGNNChemModel(ChemModel):
         if best_mol is None:
             return
         # visualize it
-        make_dir('visualization_%s' % dataset)
-        visualize_mol('visualization_%s/%d_%d.png' % (dataset, count, step), best_mol)
+        make_dir('visualization_%s' % self.dataset)
+        visualize_mol('visualization_%s/%d_%d.png' % (self.dataset, count, step), best_mol)
         # record the best molecule
         generated_all_similes.append(Chem.MolToSmiles(best_mol))
-        dump('generated_smiles_%s' % (dataset), generated_all_similes)
-        print("Real QED value")
-        print(QED.qed(best_mol))
+        dump('generated_smiles_%s' % (self.dataset), generated_all_similes)
+        #print("Real QED value")
+        #print(QED.qed(best_mol))
         if len(generated_all_similes) >= self.params['number_of_generation']:
             print("generation done")
             exit(0)
@@ -1065,6 +1067,7 @@ class DenseGGNNChemModel(ChemModel):
                 random_normal_states = self.optimization_over_prior(random_normal_states,
                                                                     maximum_length, generated_all_similes, elements,
                                                                     count)
+                print('random_normal_states',random_normal_states)         
                 count += 1
             bucket_counters[bucket] += 1
 

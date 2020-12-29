@@ -4,13 +4,13 @@ import tensorflow as tf
 import queue
 import threading
 import pickle
-# from rdkit.Chem import AllChem
-# from rdkit.Chem import Draw
+from rdkit.Chem import AllChem
+from rdkit.Chem import Draw
 from rdkit import Chem
 from collections import defaultdict, deque
 import os
-# from rdkit.Chem import Crippen
-# from rdkit.Chem import QED
+from rdkit.Chem import Crippen
+from rdkit.Chem import QED
 
 SMALL_NUMBER = 1e-7
 LARGE_NUMBER= 1e10
