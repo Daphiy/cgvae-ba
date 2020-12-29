@@ -339,8 +339,8 @@ class DenseGGNNChemModel(ChemModel):
         z_prior = tf.reshape(self.placeholders['z_prior'], [-1, h_dim])
         # Train: sample from u, Sigma. Generation: sample from 0,1
         z_sampled = tf.cond(self.placeholders['is_generative'], lambda: z_prior,  # standard normal
-                            lambda: tf.add(self.ops['mean'], tf.multiply(tf.sqrt(tf.exp(self.ops['logvariance'])),
-                                                                         z_prior)))  # non-standard normal
+                            lambda: tf.add(self.ops['mean'],
+                                    tf.multiply(tf.sqrt(tf.exp(self.ops['logvariance'])), z_prior)))  # non-standard normal
         # filter
         z_sampled = tf.reshape(z_sampled, [-1, num_v, h_dim]) * self.ops['graph_state_mask']
         return z_sampled
@@ -1119,9 +1119,9 @@ class DenseGGNNChemModel(ChemModel):
 if __name__ == "__main__":
     args = {}#docopt(__doc__)
     dataset = "ba"#args.get('--dataset')
+    evaluation = False
     try:
         model = DenseGGNNChemModel(args)
-        evaluation = False
         if evaluation:
             model.example_evaluation()
         else:
