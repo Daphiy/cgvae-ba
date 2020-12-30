@@ -18,30 +18,35 @@ class ChemModel(object):
 
         }
 
-    def __init__(self, args,dataset='ba',batch_size=64,num_epochs=10,hidden_size=10,lr=0.001,kl_trade_off_lambda=0.3,optimization_step=0):
+    def __init__(self, args):
         self.args = args
-        self.dataset = dataset = 'ba'
-        # Collect argument things:
+
         data_dir = ''
         if '--data_dir' in args and args['--data_dir'] is not None:
             data_dir = args['--data_dir']
         self.data_dir = data_dir
 
+        if 'dataset' in args:
+            self.dataset = dataset = args['dataset']
+        else:
+            self.dataset = dataset = "ba"  # "qm9"#args.get('--dataset')
+
         # Collect parameters:
         self.params = params = self.default_params()
-        # self.params['batch_size'] = batch_size
-        # self.params['num_epochs'] = num_epochs
-        # self.params['epoch_to_generate'] = num_epochs
-        # self.params['hidden_size'] = hidden_size
-        # self.params['lr'] = lr
-        # self.params['kl_trade_off_lambda'] = kl_trade_off_lambda
-        # self.params['optimization_step'] = optimization_step
-        # self.params['train_file'] = params['train_file'] = 'data/molecules_train_%s.json' % self.dataset
-        # self.params['valid_file'] = params['valid_file'] = 'data/molecules_valid_%s.json' % self.dataset
-        # # Get which dataset in use
-        self.params['dataset'] = dataset = "ba"#"qm9"#args.get('--dataset')
-        # Number of atom types of this dataset
-        self.params['num_symbols'] = 1#len(dataset_info(dataset)["atom_types"])
+
+        self.params['dataset'] = dataset
+        self.params['train_file'] ='data/molecules_train_%s.json' % self.dataset
+        self.params['valid_file'] = 'data/molecules_valid_%s.json' % self.dataset
+
+        if 'batch_size' in args: self.params['batch_size'] = args['batch_size']
+        if 'num_epochs' in args: self.params['num_epochs'] = args['num_epochs']
+        if 'epoch_to_generate' in args: self.params['epoch_to_generate'] = args['epoch_to_generate']
+        if 'hidden_size' in args: self.params['hidden_size'] = args['hidden_size']
+        if 'lr' in args: self.params['lr'] = args['lr']
+        if 'kl_trade_off_lambda' in args: self.params['kl_trade_off_lambda'] = args['kl_trade_off_lambda']
+        if 'optimization_step' in args: self.params['optimization_step'] = args['optimization_step']
+
+        self.params['num_symbols'] = 1
 
         self.run_id = "_".join([time.strftime("%Y-%m-%d-%H-%M-%S"), str(os.getpid())])
         log_dir = args.get('--log_dir') or '.'
@@ -55,9 +60,8 @@ class ChemModel(object):
         np.random.seed(params['random_seed'])
 
         # Load data:
-        self.max_num_vertices = 0
-        self.num_edge_types = 0
-        self.annotation_size = 0
+        self.max_num_vertices, self.max_num_vertices, self.annotation_size = 0,0,0
+
         self.train_data = self.load_data(params['train_file'], is_training_data=True)
         self.valid_data = self.load_data(params['valid_file'], is_training_data=False)
 

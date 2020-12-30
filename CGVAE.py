@@ -49,9 +49,8 @@ h:      GNN hidden size
 
 
 class DenseGGNNChemModel(ChemModel):
-    def __init__(self, args, dataset='ba',batch_size=64,num_epochs=10,hidden_size=10,lr=0.001,kl_trade_off_lambda=0.3,optimization_step=0):
-        super().__init__(args,dataset='ba',batch_size=64,num_epochs=10,hidden_size=10,lr=0.001,kl_trade_off_lambda=0.3,optimization_step=0)
-        self.dataset = dataset
+    def __init__(self, args):
+        super().__init__(args,)
  
     @classmethod
     def default_params(cls):
@@ -95,8 +94,6 @@ class DenseGGNNChemModel(ChemModel):
             'graph_state_dropout_keep_prob': 1,
             "compensate_num": 1,  # how many atoms to be added during generation
 
-            'train_file' : 'data/molecules_train_%s.json' % dataset,
-            'valid_file' : 'data/molecules_valid_%s.json' % dataset,
             'try_different_starting': True,
             "num_different_starting": 6,
 

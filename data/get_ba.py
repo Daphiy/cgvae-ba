@@ -7,7 +7,9 @@ def BA_2_CGVAE_format(num_train=2400,num_val=600,N=10,M=8):
     ba_graphs = []
     for k in range(num_train+num_val):
         ba_graphs.append(barabasi_albert_graph(N,M))
-    CGVAE_format_graphs_train,CGVAE_format_graphs_val = [],[]
+
+    CGVAE_format_graphs_train, CGVAE_format_graphs_val = [], []
+
     for ba in ba_graphs[:num_train]:
         graph = []
         for (u,v) in ba.edges.keys():
@@ -18,6 +20,7 @@ def BA_2_CGVAE_format(num_train=2400,num_val=600,N=10,M=8):
             "targets":[[np.average(ba.degree)]],
             "smiles":"C",
         })
+
     with open('molecules_%s_%s.json' % ('train', 'ba'), 'w') as f:
         json.dump(CGVAE_format_graphs_train, f)
     
