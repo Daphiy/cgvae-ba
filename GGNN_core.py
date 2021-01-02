@@ -10,12 +10,13 @@ import pickle
 import random
 import utils
 from utils import MLP, dataset_info, ThreadedIterator, graph_to_adj_mat, SMALL_NUMBER, LARGE_NUMBER, graph_to_adj_mat
+import csv
 
 class ChemModel(object):
     @classmethod
+
     def default_params(cls):
         return {
-
         }
 
     def __init__(self, args):
@@ -31,6 +32,12 @@ class ChemModel(object):
         else:
             self.dataset = dataset = "ba"  # "qm9"#args.get('--dataset')
 
+        self.results_file_path = "latent_vars.csv"
+
+        with open(self.results_file_path,"w") as f:
+            f.write("m,n,z0_mean,z0_var,z1_mean,z1_var,z2_mean,z2_var,z3_mean,z3_var,z4_mean,z4_var\n")
+
+        self.num_edge_types = 1
         # Collect parameters:
         self.params = params = self.default_params()
 
@@ -39,8 +46,7 @@ class ChemModel(object):
         self.params['valid_file'] = 'data/molecules_valid_%s.json' % self.dataset
 
         if 'batch_size' in args: self.params['batch_size'] = args['batch_size']
-        if 'num_epochs' in args: self.params['num_epochs'] = args['num_epochs']
-        if 'epoch_to_generate' in args: self.params['epoch_to_generate'] = args['epoch_to_generate']
+        if 'num_epochs' in args: self.params['num_epochs'] = self.params['epoch_to_generate'] = args['num_epochs']
         if 'hidden_size' in args: self.params['hidden_size'] = args['hidden_size']
         if 'lr' in args: self.params['lr'] = args['lr']
         if 'kl_trade_off_lambda' in args: self.params['kl_trade_off_lambda'] = args['kl_trade_off_lambda']
@@ -160,8 +166,6 @@ class ChemModel(object):
         # Construct logit matrices for both edges and edge types
         self.construct_logit_matrices()
 
-        # Obtain losses for edges and edge types
-        self.ops['qed_loss'] = []
         self.ops['loss'] = self.construct_loss()
 
     def make_train_step(self):
@@ -208,7 +212,7 @@ class ChemModel(object):
         raise Exception("Models have to implement make_minibatch_iterator!")
 
     """
-    def save_intermediate_results(self, adjacency_matrix, edge_type_prob, edge_type_label, node_symbol_prob, node_symbol, edge_prob, edge_prob_label, qed_prediction, qed_labels, mean, logvariance):
+    def save_intermediate_results(self, adjacency_matrix, edge_type_prob, label, node_symbol_prob, node_symbol, edge_prob, edge_prob_label, qed_prediction, qed_labels, mean, logvariance):
         with open('intermediate_results_%s' % self.params["dataset"], 'wb') as out_file:
             pickle.dump([adjacency_matrix, edge_type_prob, edge_type_label, node_symbol_prob, node_symbol, edge_prob, edge_prob_label, qed_prediction, qed_labels, mean, logvariance], out_file, pickle.HIGHEST_PROTOCOL)
     """
@@ -231,20 +235,20 @@ class ChemModel(object):
                 self.params['batch_size'], batch_data[self.placeholders['num_vertices']], self.params['hidden_size'])
             if is_training:
                 batch_data[self.placeholders['out_layer_dropout_keep_prob']] = self.params['out_layer_dropout_keep_prob']
-                fetch_list = [self.ops['loss'], self.ops['train_step'],
-                              self.ops["edge_loss"], self.ops['kl_loss'],
-                              #self.ops['node_symbol_prob'], self.placeholders['node_symbols'],
-                              #self.ops['qed_computed_values'], 
-                              self.placeholders['target_values'],
-                              #self.ops['total_qed_loss'],
-                              self.ops['mean'], self.ops['logvariance'],
-                              self.ops['grads'], self.ops['mean_edge_loss'], #self.ops['mean_node_symbol_loss'],
-                              self.ops['mean_kl_loss'], 
-                              #self.ops['mean_total_qed_loss']
+                fetch_list = [self.ops['loss'], #0 - float
+                              self.ops['train_step'], #1 - None
+                              self.ops["edge_loss"], #2 - shape (batch_size,)
+                              self.ops['kl_loss'], #3 - shape (batch_size,)
+                              self.placeholders['target_values'], #4
+                              self.ops['mean'], #5 shape (batch_size*10, 10)
+                              self.ops['logvariance'], #6 shape (batch_size*10, 10)
+                              self.ops['grads'], #7 - length 154 (????)
+                              self.ops['mean_edge_loss'], #8 - float
+                              self.ops['mean_kl_loss'], #9 - float
                               ]
             else:
                 batch_data[self.placeholders['out_layer_dropout_keep_prob']] = 1.0
-                fetch_list = [self.ops['mean_edge_loss'], self.ops['accuracy_task0']]
+                fetch_list = [self.ops['mean_edge_loss']]
             result = self.sess.run(fetch_list, feed_dict=batch_data)
             """try:
                 if is_training:
@@ -252,6 +256,18 @@ class ChemModel(object):
                         result[11], result[12], result[4], result[5], result[9], result[10], result[6], result[7], result[13], result[14])
             except IndexError:
                 pass"""
+
+            node_seqs = batch_data[self.placeholders['node_sequence']] # len batch size
+            Ms = batch_data[self.placeholders['target_values']] # shape (1,batch_size)
+            batch_size = len(node_seqs)
+
+            # for gidx in range(batch_size):
+            #     M = batch_data[self.placeholders['target_values']][0][gidx]
+            #
+            #     row = []#[m,n,]
+            #     with open("losses_experiments.csv", "a", newline='') as fp:
+            #         wr = csv.writer(fp, dialect='excel')
+            #         wr.writerow(row)
 
             batch_loss = result[0]
             loss += batch_loss * num_graphs
@@ -293,10 +309,9 @@ class ChemModel(object):
                     with open(self.log_file, 'w') as f:
                         json.dump(log_to_save, f, indent=4)
                     self.save_model(str(epoch) + ("_%s.pickle" % (self.params["dataset"])))
-                # Run epoches for graph generation
-                if epoch >= self.params['epoch_to_generate']:
-                    
-                    self.generate_new_graphs(self.train_data)
+                # Run epochs for graph generation
+                # if epoch >= self.params['epoch_to_generate']:
+                #     self.generate_new_graphs(self.train_data)
 
     def save_model(self, path: str) -> None:
         weights_to_save = {}

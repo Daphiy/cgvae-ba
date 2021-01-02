@@ -35,7 +35,7 @@ def freeze_graph_model(sess, trainable_vars):
         return trainable_vars
 
 def dataset_info(dataset): #qm9, zinc, cep
-    if dataset == 'ba':
+    if dataset == 'ba' or dataset == 'ba6':
         return { 'atom_types': ["C"],
                  'maximum_valence': {0: 10000},
                  'number_to_atom': {0: "C"},

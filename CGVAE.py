@@ -88,7 +88,7 @@ class DenseGGNNChemModel(ChemModel):
                 14: [0, 2, 4, 6, 8, 10, 12],
             },
             'num_timesteps': 12,  # gnn propagation step
-            'hidden_size': 10, #10
+            'hidden_size': 5, #10
             "kl_trade_off_lambda": 0.3,  # kl tradeoff
             'learning_rate': 0.001,
             'graph_state_dropout_keep_prob': 1,
@@ -103,7 +103,6 @@ class DenseGGNNChemModel(ChemModel):
             "multi_bfs_path": False,  # whether sample several BFS paths for each molecule
             "bfs_path_count": 30,
             "path_random_order": False,  # False: canonical order, True: random order
-            "sample_transition": False,  # whether use transition sampling
             'edge_weight_dropout_keep_prob': 1,
             'check_overlap_edge': False,
             "truncate_distance": 10,
@@ -128,8 +127,8 @@ class DenseGGNNChemModel(ChemModel):
                                                                [None, self.num_edge_types, None, None],
                                                                name="adjacency_matrix")  # [b, e, v, v]
         # labels for node symbol prediction
-        self.placeholders['node_symbols'] = tf.placeholder(tf.float32, [None, None, self.params[
-            'num_symbols']])  # [b, v, edge_type]
+        self.placeholders['node_symbols'] = tf.placeholder(tf.float32,
+                                                           [None, None, self.params['num_symbols']])  # [b, v, edge_type]
         # node symbols used to enhance latent representations
         self.placeholders['latent_node_symbols'] = tf.placeholder(tf.float32,
                                                                   [None, None, self.params['hidden_size']],
@@ -166,18 +165,15 @@ class DenseGGNNChemModel(ChemModel):
                                                       name='z_prior')  # the prior of z sampled from normal distribution
         # put in front of kl latent loss
         self.placeholders['kl_trade_off_lambda'] = tf.placeholder(tf.float32, [], name='kl_trade_off_lambda')  # number
-        # overlapped edge features
-        # self.placeholders['overlapped_edge_features'] = tf.placeholder(tf.int32, [None, None, None],
-        #                                                                name='overlapped_edge_features')  # [b, es, v]
 
         # weights for encoder and decoder GNN.
         if self.params["residual_connection_on"]:
             # weights for encoder and decoder GNN. Different weights for each iteration
             for scope in ['_encoder', '_decoder']:
-                if scope == '_encoder':
-                    new_h_dim = h_dim
-                else:
-                    new_h_dim = expanded_h_dim
+
+                if scope == '_encoder':    new_h_dim = h_dim
+                else:    new_h_dim = expanded_h_dim
+
                 for iter_idx in range(self.params['num_timesteps']):
                     with tf.variable_scope("gru_scope" + scope + str(iter_idx), reuse=False):
                         self.weights['edge_weights' + scope + str(iter_idx)] = tf.Variable(
@@ -187,8 +183,7 @@ class DenseGGNNChemModel(ChemModel):
                                 np.zeros([self.num_edge_types, 1, new_h_dim]).astype(np.float32))
 
                         cell = tf.contrib.rnn.GRUCell(new_h_dim)
-                        cell = tf.nn.rnn_cell.DropoutWrapper(cell,
-                                                             state_keep_prob=self.placeholders['graph_state_keep_prob'])
+                        cell = tf.nn.rnn_cell.DropoutWrapper(cell, state_keep_prob=self.placeholders['graph_state_keep_prob'])
                         self.weights['node_gru' + scope + str(iter_idx)] = cell
         else:
             for scope in ['_encoder', '_decoder']:
@@ -214,8 +209,8 @@ class DenseGGNNChemModel(ChemModel):
         self.weights['variance_biases'] = tf.Variable(np.zeros([1, h_dim]).astype(np.float32))
 
         # The weights for generating nodel symbol logits
-        self.weights['node_symbol_weights'] = tf.Variable(glorot_init([h_dim, self.params['num_symbols']]))
-        self.weights['node_symbol_biases'] = tf.Variable(np.zeros([1, self.params['num_symbols']]).astype(np.float32))
+        # self.weights['node_symbol_weights'] = tf.Variable(glorot_init([h_dim, self.params['num_symbols']]))
+        # self.weights['node_symbol_biases'] = tf.Variable(np.zeros([1, self.params['num_symbols']]).astype(np.float32))
 
         feature_dimension = 5 * expanded_h_dim
         # record the total number of features
@@ -236,8 +231,8 @@ class DenseGGNNChemModel(ChemModel):
         # Weight for overlapped edge feature
         self.weights["overlapped_edge_weight"] = tf.Variable(glorot_init([2, expanded_h_dim]))
         # weights for linear projection on qed prediction input
-        self.weights['qed_weights'] = tf.Variable(glorot_init([h_dim, h_dim]))
-        self.weights['qed_biases'] = tf.Variable(np.zeros([1, h_dim]).astype(np.float32))
+        # self.weights['qed_weights'] = tf.Variable(glorot_init([h_dim, h_dim]))
+        # self.weights['qed_biases'] = tf.Variable(np.zeros([1, h_dim]).astype(np.float32))
         # use node embeddings
         self.weights["node_embedding"] = tf.Variable(glorot_init([self.params["num_symbols"], h_dim]))
 
@@ -251,30 +246,31 @@ class DenseGGNNChemModel(ChemModel):
 
     def compute_final_node_representations_with_residual(self, h, adj, scope_name):  # scope_name: _encoder or _decoder
         # h: initial representation, adj: adjacency matrix, different GNN parameters for encoder and decoder
-        v = self.placeholders['num_vertices']
+        num_v = self.placeholders['num_vertices']
+        print("scope_name", scope_name)
         # _decoder uses a larger latent space because concat of symbol and latent representation
         if scope_name == "_decoder":
             h_dim = self.params['hidden_size'] + self.params['hidden_size'] + 1
         else:
             h_dim = self.params['hidden_size']
-        h = tf.reshape(h, [-1, h_dim])  # [b*v, h]
+        h = tf.reshape(h, [-1, h_dim])  # [b*num_v, h]
         # record all hidden states at each iteration
         all_hidden_states = [h]
         for iter_idx in range(self.params['num_timesteps']):
             with tf.variable_scope("gru_scope" + scope_name + str(iter_idx), reuse=None) as g_scope:
                 for edge_type in range(self.num_edge_types):
                     # the message passed from this vertice to other vertices
-                    m = tf.matmul(h, self.weights['edge_weights' + scope_name + str(iter_idx)][edge_type])  # [b*v, h]
+                    m = tf.matmul(h, self.weights['edge_weights' + scope_name + str(iter_idx)][edge_type])  # [b*num_v, h]
                     if self.params['use_edge_bias']:
-                        m += self.weights['edge_biases' + scope_name + str(iter_idx)][edge_type]  # [b, v, h]
-                    m = tf.reshape(m, [-1, v, h_dim])  # [b, v, h]
+                        m += self.weights['edge_biases' + scope_name + str(iter_idx)][edge_type]  # [b, num_v, h]
+                    m = tf.reshape(m, [-1, num_v, h_dim])  # [b, num_v, h]
                     # collect the messages from other vertices to each vertice
                     if edge_type == 0:
                         acts = tf.matmul(adj[edge_type], m)
                     else:
                         acts += tf.matmul(adj[edge_type], m)
                 # all messages collected for each node
-                acts = tf.reshape(acts, [-1, h_dim])  # [b*v, h]
+                acts = tf.reshape(acts, [-1, h_dim])  # [b*num_v, h]
                 # add residual connection here
                 layer_residual_connections = self.params['residual_connections'].get(iter_idx)
                 if layer_residual_connections is None:
@@ -286,10 +282,10 @@ class DenseGGNNChemModel(ChemModel):
                 acts = tf.concat([acts] + layer_residual_states, axis=1)  # [b, (1+num residual connection)* h]
 
                 # feed msg inputs and hidden states to GRU
-                h = self.weights['node_gru' + scope_name + str(iter_idx)](acts, h)[1]  # [b*v, h]
+                h = self.weights['node_gru' + scope_name + str(iter_idx)](acts, h)[1]  # [b*num_v, h]
                 # record the new hidden states
                 all_hidden_states.append(h)
-        last_h = tf.reshape(all_hidden_states[-1], [-1, v, h_dim])
+        last_h = tf.reshape(all_hidden_states[-1], [-1, num_v, h_dim])
         return last_h
 
     def compute_final_node_representations_without_residual(self, h, adj, edge_weights, edge_biases, node_gru,
@@ -348,31 +344,19 @@ class DenseGGNNChemModel(ChemModel):
         return output
 
     def generate_cross_entropy(self, idx, cross_entropy_losses, edge_predictions):
-        #v = self.placeholders['num_vertices']
         h_dim = self.params['hidden_size']
-        #num_symbols = self.params['num_symbols']
         batch_size = tf.shape(self.placeholders['initial_node_representation'])[0]
         # Use latent representation as decoder GNN'input
         filtered_z_sampled = self.ops["initial_repre_for_decoder"]  # [b, v, h+h]
-        # data needed in this iteration
         incre_adj_mat = self.placeholders['incre_adj_mat'][:, idx, :, :, :]  # [b, e, v, v]
         distance_to_others = self.placeholders['distance_to_others'][:, idx, :]  # [b,v]
-        # overlapped_edge_features = self.placeholders['overlapped_edge_features'][:, idx, :]  # [b,v]
         node_sequence = self.placeholders['node_sequence'][:, idx, :]  # [b, v]
         node_sequence = tf.expand_dims(node_sequence, axis=2)  # [b,v,1]
-
-        #edge_type_masks = self.placeholders['edge_type_masks'][:, idx, :, :]  # [b, e, v]
-        # make invalid locations to be very small before using softmax function
-        #edge_type_masks = edge_type_masks * LARGE_NUMBER - LARGE_NUMBER
-        #edge_type_labels = self.placeholders['edge_type_labels'][:, idx, :, :]  # [b, e, v]
-        #edge_masks = self.placeholders['edge_masks'][:, idx, :]  # [b, v]
-        # make invalid locations to be very small before using softmax function
-        #edge_masks = edge_masks * LARGE_NUMBER - LARGE_NUMBER
-        #edge_labels = self.placeholders['edge_labels'][:, idx, :]  # [b, v]
-        #local_stop = self.placeholders['local_stop'][:, idx]  # [b]
         # concat the hidden states with the node in focus
         filtered_z_sampled = tf.concat([filtered_z_sampled, node_sequence], axis=2)  # [b, v, h + h + 1]
         print("use graph", self.params["use_graph"])
+        print("hdim",h_dim)
+        print("batch size",batch_size)
         # Decoder GNN
         if self.params["use_graph"]:
             if self.params["residual_connection_on"]:
@@ -406,7 +390,8 @@ class DenseGGNNChemModel(ChemModel):
         edge_repr = tf.concat( \
             [tf.tile(tf.expand_dims(node_in_focus, 1), [1, num_v, 1]), new_filtered_z_sampled],
             axis=2)  # [b, v, 2*(h+h)]
-        # combine edge repre with local and global repr
+
+        # combine edge repr with local and global repr
         local_graph_repr_before_expansion = tf.reduce_sum(new_filtered_z_sampled, axis=1) / \
                                             tf.reduce_sum(self.placeholders['node_mask'], axis=1, keep_dims=True)  # [b, h + h]
         local_graph_repr = tf.expand_dims(local_graph_repr_before_expansion, 1)
@@ -418,20 +403,14 @@ class DenseGGNNChemModel(ChemModel):
         global_graph_repr = tf.expand_dims(global_graph_repr_before_expansion, 1)
         global_graph_repr = tf.tile(global_graph_repr, [1, num_v, 1])  # [b, v, h+h]
         print('global_graph_repr shape', global_graph_repr.shape)
-        # tf.print(global_graph_repr.shape)
 
         # distance representation
         distance_repr = tf.nn.embedding_lookup(self.weights['distance_embedding'], distance_to_others) # [b, v, h+h]
         print('distance_repr shape',distance_repr.shape)
-        # overlapped edge feature representation
-        # overlapped_edge_repr = tf.nn.embedding_lookup(self.weights['overlapped_edge_weight'],
-        #                                               overlapped_edge_features)  # [b, v, h+h]
-        # concat and reshape.
-        combined_edge_repr = tf.concat([edge_repr, local_graph_repr, global_graph_repr, distance_repr], axis=2)
 
+        combined_edge_repr = tf.concat([edge_repr, local_graph_repr, global_graph_repr, distance_repr], axis=2)
         combined_edge_repr = tf.reshape(combined_edge_repr, [-1, self.params["feature_dimension"] * (h_dim + h_dim + 1)])
         print('combined_edge_repr shape',combined_edge_repr.shape)
-        # tf.print(combined_edge_repr.shape)
 
         # Calculate edge logits
         edge_logits = self.fully_connected(combined_edge_repr,
@@ -440,15 +419,10 @@ class DenseGGNNChemModel(ChemModel):
                                            self.weights['edge_iteration_output'])
         # tf.print(edge_logits.shape)
         edge_logits = tf.reshape(edge_logits, [-1, num_v])  # [b, v]
-        # filter invalid terms
-        #edge_logits = edge_logits + edge_masks
-        # Calculate whether it will stop at this step
-        # prepare the data
+
         expanded_stop_node = tf.tile(self.weights['stop_node'], [batch_size, 1])  # [b, h + h]
         distance_to_stop_node = tf.nn.embedding_lookup(self.weights['distance_embedding'],
                                                        tf.tile([0], [batch_size]))  # [b, h + h]
-        # overlap_edge_stop_node = tf.nn.embedding_lookup(self.weights['overlapped_edge_weight'],
-        #                                                 tf.tile([0], [batch_size]))  # [b, h + h]
 
         combined_stop_node_repr = tf.concat([node_in_focus, expanded_stop_node, local_graph_repr_before_expansion,
                                              global_graph_repr_before_expansion, distance_to_stop_node,], axis=1)# [b, 6 * (h + h)]
@@ -462,52 +436,24 @@ class DenseGGNNChemModel(ChemModel):
 
         edge_logits = tf.concat([edge_logits, stop_logits], axis=1)  # [b, v + 1]
 
-        # Calculate edge type logits
-        #edge_type_logits = []
-        #for i in range(self.num_edge_types):
-         #   edge_type_logit = self.fully_connected(combined_edge_repr,
-         #                                          self.weights['edge_type_%d' % i],
-         #                                          self.weights['edge_type_biases_%d' % i],
-         #                                          self.weights[
-         #                                              'edge_type_output_%d' % i])  # [b * v, 1]
-        #  edge_type_logits.append(tf.reshape(edge_type_logit, [-1, 1, v]))  # [b, 1, v]
-
-        #edge_type_logits = tf.concat(edge_type_logits, axis=1)  # [b, e, v]
-        # filter invalid items
-        #edge_type_logits = edge_type_logits + edge_type_masks  # [b, e, v]
-        # softmax over edge type axis
-        #edge_type_probs = tf.nn.softmax(edge_type_logits, 1)  # [b, e, v]
-
-        # edge labels
-        #edge_labels = tf.concat([edge_labels, tf.expand_dims(local_stop, 1)], axis=1)  # [b, v + 1]
         # softmax for edge
         edge_loss = - tf.reduce_sum(tf.log(tf.nn.softmax(edge_logits) + SMALL_NUMBER),axis=1) #* edge_labels, axis=1)
-        # softmax for edge type
-        #edge_type_loss = - edge_type_labels * tf.log(edge_type_probs + SMALL_NUMBER)  # [b, e, v]
-        #edge_type_loss = tf.reduce_sum(edge_type_loss, axis=[1, 2])  # [b]
-        # total loss
-        iteration_loss = edge_loss #+ edge_type_loss
-        cross_entropy_losses = cross_entropy_losses.write(idx, iteration_loss)
+
+        cross_entropy_losses = cross_entropy_losses.write(idx, edge_loss)
         edge_predictions = edge_predictions.write(idx, tf.nn.softmax(edge_logits))
-        #edge_type_predictions = edge_type_predictions.write(idx, edge_type_probs)
-        return (idx + 1, cross_entropy_losses, edge_predictions)#edge_type_predictions)
+        return (idx + 1, cross_entropy_losses, edge_predictions)
 
     def construct_logit_matrices(self):
-        # num_vertices = self.placeholders['num_vertices']
-        # #batch_size = tf.shape(self.placeholders['initial_node_representation'])[0]
-        # h_dim = self.params['hidden_size']
-
         # Initial state: embedding
         latent_node_state = self.get_node_embedding_state(self.placeholders["latent_node_symbols"])
 
         # concat z_sampled with node symbols
-        filtered_z_sampled = tf.concat([self.ops['z_sampled'],latent_node_state], axis=2)  # [b, v, h + h]
+        filtered_z_sampled = tf.concat([self.ops['z_sampled'], latent_node_state], axis=2)  # [b, v, h + h]
         self.ops["initial_repre_for_decoder"] = filtered_z_sampled
 
         # The tensor array used to collect the cross entropy losses at each step
         cross_entropy_losses = tf.TensorArray(dtype=tf.float32, size=self.placeholders['max_iteration_num'])
         edge_predictions = tf.TensorArray(dtype=tf.float32, size=self.placeholders['max_iteration_num'])
-        #edge_type_predictions = tf.TensorArray(dtype=tf.float32, size=self.placeholders['max_iteration_num'])
 
         __, cross_entropy_losses_final, edge_predictions_final = \
             tf.while_loop(
@@ -518,21 +464,10 @@ class DenseGGNNChemModel(ChemModel):
 
         # record the predictions for generation
         self.ops['edge_predictions'] = edge_predictions_final.read(0)
-        #self.ops['edge_type_predictions'] = edge_type_predictions_final.read(0)
 
         # final cross entropy losses
         cross_entropy_losses_final = cross_entropy_losses_final.stack()
         self.ops['cross_entropy_losses'] = tf.transpose(cross_entropy_losses_final, [1, 0])  # [b, es]
-
-        # Logits for node symbols
-        # self.ops['node_symbol_logits'] = tf.reshape(
-        #     tf.matmul(
-        #         tf.reshape(self.ops['z_sampled'], [-1, h_dim]),
-        #         self.weights['node_symbol_weights']
-        #     )
-        #     + self.weights['node_symbol_biases'],
-        #     [-1, num_vertices, self.params['num_symbols']]
-        # )
 
     def construct_loss(self):
         num_vertices = self.placeholders['num_vertices']
@@ -544,69 +479,15 @@ class DenseGGNNChemModel(ChemModel):
         # KL loss
         kl_loss = 1 + self.ops['logvariance'] - tf.square(self.ops['mean']) - tf.exp(self.ops['logvariance'])
         kl_loss = tf.reshape(kl_loss, [-1, num_vertices, h_dim]) * self.ops['graph_state_mask']
+
         self.ops['kl_loss'] = -0.5 * tf.reduce_sum(kl_loss, [1, 2])
-
-        # Node symbol loss
-        #self.ops['node_symbol_prob'] = tf.nn.softmax(self.ops['node_symbol_logits'])
-        #self.ops['node_symbol_loss'] = -tf.reduce_sum(tf.log(self.ops['node_symbol_prob'] + SMALL_NUMBER) *
-        #                                              self.placeholders['node_symbols'], axis=[1, 2])
-        # Add in the loss for calculating QED
-        for (internal_id, task_id) in enumerate(self.params['task_ids']):
-            with tf.variable_scope("out_layer_task%i" % task_id):
-                with tf.variable_scope("regression_gate"):
-                    self.weights['regression_gate_task%i' % task_id] = MLP(self.params['hidden_size'], 1, [],
-                                                                           self.placeholders[
-                                                                               'out_layer_dropout_keep_prob'])
-                with tf.variable_scope("regression"):
-                    self.weights['regression_transform_task%i' % task_id] = MLP(self.params['hidden_size'], 1, [],
-                                                                                self.placeholders[
-                                                                                    'out_layer_dropout_keep_prob'])
-                normalized_z_sampled = tf.nn.l2_normalize(self.ops['z_sampled'], 2)
-                #self.ops['qed_computed_values'] = computed_values = self.gated_regression(normalized_z_sampled,
-                #                                                                          self.weights[
-                #                                                                              'regression_gate_task%i' % task_id],
-                #                                                                          self.weights[
-                #                                                                              'regression_transform_task%i' % task_id],
-                #                                                                          self.params["hidden_size"],
-                #                                                                          self.weights['qed_weights'],
-                #                                                                          self.weights['qed_biases'],
-                #                                                                          self.placeholders[
-                #                                                                              'num_vertices'],
-                #                                                                          self.placeholders[
-                #                                                                              'node_mask'])
-                diff  = - self.placeholders['target_values'][internal_id, :]  # + computed_values # [b]
-                task_target_mask = self.placeholders['target_mask'][internal_id, :]
-                task_target_num = tf.reduce_sum(task_target_mask) + SMALL_NUMBER
-                diff = diff * task_target_mask  # Mask out unused values [b]
-                self.ops['accuracy_task%i' % task_id] = tf.reduce_sum(tf.abs(diff)) / task_target_num
-                task_loss = tf.reduce_sum(0.5 * tf.square(diff)) / task_target_num  # number
-                # Normalise loss to account for fewer task-specific examples in batch:
-                task_loss = task_loss * (1.0 / (self.params['task_sample_ratios'].get(task_id) or 1.0))
-                #self.ops['qed_loss'].append(task_loss)
-                if task_id == 0:  # Assume it is the QED score
-                    z_sampled_shape = tf.shape(self.ops['z_sampled'])
-                    flattened_z_sampled = tf.reshape(self.ops['z_sampled'], [z_sampled_shape[0], -1])
-                    self.ops['l2_loss'] = 0.01 * tf.reduce_sum(flattened_z_sampled * flattened_z_sampled, axis=1) / 2
-                    # Calculate the derivative with respect to QED + l2 loss
-                    self.ops['derivative_z_sampled'] = tf.gradients(
-                        #self.ops['qed_computed_values'] 
-                                                                   - self.ops['l2_loss'], self.ops['z_sampled'])
-        #self.ops['total_qed_loss'] = tf.reduce_sum(self.ops['qed_loss'])  # number
-        self.ops['mean_edge_loss'] = tf.reduce_mean(self.ops["edge_loss"])  # record the mean edge loss
-        #self.ops['mean_node_symbol_loss'] = tf.reduce_mean(self.ops["node_symbol_loss"])
+        self.ops['mean_edge_loss'] = tf.reduce_mean(self.ops["edge_loss"])
         self.ops['mean_kl_loss'] = tf.reduce_mean(kl_trade_off_lambda * self.ops['kl_loss'])
-        #self.ops['mean_total_qed_loss'] = self.params["qed_trade_off_lambda"] * self.ops['total_qed_loss']
-        #+ self.ops['node_symbol_loss']
-        return tf.reduce_mean(self.ops["edge_loss"]  +  kl_trade_off_lambda * self.ops['kl_loss']) 
 
-    def gated_regression(self, last_h,
-                         regression_gate,
-                         regression_transform,
-                         hidden_size,
-                         projection_weight,
-                         projection_bias,
-                         v,
-                         mask):
+        return tf.reduce_mean(self.ops["edge_loss"]  +  kl_trade_off_lambda * self.ops['kl_loss'])
+
+    def gated_regression(self, last_h, regression_gate, regression_transform,
+                         hidden_size, projection_weight, projection_bias, v, mask):
         # last_h: [b x v x h]
         last_h = tf.reshape(last_h, [-1, hidden_size])  # [b*v, h]
         # linear projection on last_h
@@ -614,8 +495,7 @@ class DenseGGNNChemModel(ChemModel):
         # same as last_h
         gate_input = last_h
         # linear projection and combine
-        gated_outputs = tf.nn.sigmoid(regression_gate(gate_input)) * tf.nn.tanh(
-            regression_transform(last_h))  # [b*v, 1]
+        gated_outputs = tf.nn.sigmoid(regression_gate(gate_input)) * tf.nn.tanh(regression_transform(last_h))  # [b*v, 1]
         gated_outputs = tf.reshape(gated_outputs, [-1, v])  # [b, v]
         masked_gated_outputs = gated_outputs * mask  # [b x v]
         output = tf.reduce_sum(masked_gated_outputs, axis=1)  # [b]
@@ -649,25 +529,23 @@ class DenseGGNNChemModel(ChemModel):
                 chosen_bucket_size = bucket_sizes[chosen_bucket_idx]
 
                 # Calculate incremental results without master node
-                #if dataset == 'ba':
-                nodes_no_master, edges_no_master = data_point['node_features'],data_point['graph']
-                #nodes_no_master, edges_no_master = to_graph(data_point['smiles'], self.params["dataset"])
+                nodes_no_master, edges_no_master = data_point['node_features'], data_point['graph']
 
-                incremental_adj_mat, distance_to_others, node_sequence, edge_type_masks, edge_type_labels, local_stop, edge_masks, edge_labels = \
+                incremental_adj_mat, distance_to_others, node_sequence, edge_type_masks, edge_type_labels, local_stop, edge_masks, edge_labels, overlapped_edge_features= \
                     construct_incremental_graph(self.dataset, edges_no_master, chosen_bucket_size,
                                                 len(nodes_no_master), nodes_no_master, self.params,
                                                 initial_idx=starting_idx)
-                if self.params["sample_transition"] and list_idx > 0:
-                    incremental_results[-1] = [x + y for x, y in
-                                               zip(incremental_results[-1], [incremental_adj_mat, distance_to_others,
-                                                                             node_sequence, edge_type_masks,
-                                                                             edge_type_labels, local_stop, edge_masks,
-                                                                             edge_labels])]
-                else:
-                    incremental_results.append([incremental_adj_mat, distance_to_others, node_sequence, edge_type_masks,
-                                                edge_type_labels, local_stop, edge_masks, edge_labels,])
-                    # copy the raw_data here
-                    new_raw_data.append(data_point)
+
+                incremental_results.append([incremental_adj_mat,
+                                                distance_to_others,
+                                                node_sequence,
+                                                edge_type_masks,
+                                                edge_type_labels,
+                                                local_stop,
+                                                edge_masks,
+                                                edge_labels,])
+                # copy the raw_data here
+                new_raw_data.append(data_point)
                 if idx % 50 == 0:
                     print('finish calculating %data_point incremental matrices' % idx, end="\r")
         return incremental_results, new_raw_data
@@ -691,11 +569,12 @@ class DenseGGNNChemModel(ChemModel):
             # total number of nodes in this data point
             n_active_nodes = len(data_point["node_features"])
             bucketed[chosen_bucket_idx].append({
-                'adj_mat': graph_to_adj_mat(data_point['graph'], chosen_bucket_size, self.num_edge_types,
+                'adj_mat': graph_to_adj_mat(data_point['graph'],
+                                            chosen_bucket_size,
+                                            self.num_edge_types,
                                             self.params['tie_fwd_bkwd']),
                 'incre_adj_mat': incremental_adj_mat,
                 'distance_to_others': distance_to_others,
-                #'overlapped_edge_features': overlapped_edge_features,
                 'node_sequence': node_sequence,
                 'edge_type_masks': edge_type_masks,
                 'edge_type_labels': edge_type_labels,
@@ -744,12 +623,11 @@ class DenseGGNNChemModel(ChemModel):
             # sparse to dense for saving memory
             incre_adj_mat = incre_adj_mat_to_dense(data_point['incre_adj_mat'], self.num_edge_types, maximum_vertice_num)
             distance_to_others = distance_to_others_dense(data_point['distance_to_others'], maximum_vertice_num)
-            # overlapped_edge_features = overlapped_edge_features_to_dense(data_point['overlapped_edge_features'],
-            #                                                              maximum_vertice_num)
             node_sequence = node_sequence_to_dense(data_point['node_sequence'], maximum_vertice_num)
-            edge_type_masks = edge_type_masks_to_dense(data_point['edge_type_masks'], maximum_vertice_num, self.num_edge_types)
+            edge_type_masks = edge_type_masks_to_dense(data_point['edge_type_masks'], maximum_vertice_num,
+                                                       self.num_edge_types)
             edge_type_labels = edge_type_labels_to_dense(data_point['edge_type_labels'], maximum_vertice_num,
-                                                         self.num_edge_types)
+                                                       self.num_edge_types)
             edge_masks = edge_masks_to_dense(data_point['edge_masks'], maximum_vertice_num)
             edge_labels = edge_labels_to_dense(data_point['edge_labels'], maximum_vertice_num)
 
@@ -764,9 +642,6 @@ class DenseGGNNChemModel(ChemModel):
             batch_data['distance_to_others'].append(distance_to_others +
                                                     [np.zeros((maximum_vertice_num))
                                                      for _ in range(max_iteration_num - data_point['number_iteration'])])
-            # batch_data['overlapped_edge_features'].append(overlapped_edge_features +
-            #                                               [np.zeros((maximum_vertice_num))
-            #                                                for _ in range(max_iteration_num - data_point['number_iteration'])])
             batch_data['node_sequence'].append(
                 node_sequence + [np.zeros((maximum_vertice_num))
                 for _ in range(max_iteration_num - data_point['number_iteration'])]
@@ -799,16 +674,14 @@ class DenseGGNNChemModel(ChemModel):
                     target_task_mask.append(1.)
             batch_data['labels'].append(target_task_values)
             batch_data['task_masks'].append(target_task_mask)
-
         return batch_data
 
     def get_dynamic_feed_dict(self, elements, latent_node_symbol, incre_adj_mat, num_vertices,
-                              distance_to_others, overlapped_edge_dense, node_sequence, edge_type_masks, edge_masks,
+                              distance_to_others, node_sequence, edge_type_masks, edge_masks,
                               random_normal_states):
         if incre_adj_mat is None:
             incre_adj_mat = np.zeros((1, 1, self.num_edge_types, 1, 1))
             distance_to_others = np.zeros((1, 1, 1))
-            overlapped_edge_dense = np.zeros((1, 1, 1))
             node_sequence = np.zeros((1, 1, 1))
             edge_type_masks = np.zeros((1, 1, self.num_edge_types, 1))
             edge_masks = np.zeros((1, 1, 1))
@@ -817,51 +690,27 @@ class DenseGGNNChemModel(ChemModel):
             self.placeholders['z_prior']: random_normal_states,  # [1, v, h]
             self.placeholders['incre_adj_mat']: incre_adj_mat,  # [1, 1, e, v, v]
             self.placeholders['num_vertices']: num_vertices,  # v
-
             self.placeholders['initial_node_representation']: \
                 self.pad_annotations([elements['init']]),
             self.placeholders['node_symbols']: [elements['init']],
             self.placeholders['latent_node_symbols']: self.pad_annotations(latent_node_symbol),
             self.placeholders['adjacency_matrix']: [elements['adj_mat']],
             self.placeholders['node_mask']: [elements['mask']],
-
             self.placeholders['graph_state_keep_prob']: 1,
             self.placeholders['edge_weight_dropout_keep_prob']: 1,
             self.placeholders['iteration_mask']: [[1]],
             self.placeholders['is_generative']: True,
             self.placeholders['out_layer_dropout_keep_prob']: 1.0,
             self.placeholders['distance_to_others']: distance_to_others,  # [1, 1,v]
-            # self.placeholders['overlapped_edge_features']: overlapped_edge_dense,
             self.placeholders['max_iteration_num']: 1,
             self.placeholders['node_sequence']: node_sequence,  # [1, 1, v]
             self.placeholders['edge_type_masks']: edge_type_masks,  # [1, 1, e, v]
             self.placeholders['edge_masks']: edge_masks,  # [1, 1, v]
         }
 
-    def get_node_symbol(self, batch_feed_dict):
-        fetch_list = [self.ops['node_symbol_prob']]
-        result = self.sess.run(fetch_list, feed_dict=batch_feed_dict)
-        return result[0]
-
-    def node_symbol_one_hot(self, sampled_node_symbol, real_n_vertices, max_n_vertices):
-        one_hot_representations = []
-        for idx in range(max_n_vertices):
-            representation = [0] * self.params["num_symbols"]
-            if idx < real_n_vertices:
-                atom_type = sampled_node_symbol[idx]
-                representation[atom_type] = 1
-            one_hot_representations.append(representation)
-        return one_hot_representations
-
     def search_and_generate_molecule(self, initial_idx, valences,
                                      sampled_node_symbol, real_n_vertices, random_normal_states,
                                      elements, max_n_vertices):
-        # New molecule
-        # new_mol = Chem.MolFromSmiles('')
-        # new_mol = Chem.rdchem.RWMol(new_mol)
-        # Add atoms
-        # add_atoms(new_mol, sampled_node_symbol, self.params["dataset"])
-        # Breadth first search over the molecule
         queue = deque([initial_idx])
         # color 0: have not found 1: in the queue 2: searched already
         color = [0] * max_n_vertices
@@ -875,30 +724,21 @@ class DenseGGNNChemModel(ChemModel):
             # iterate until the stop node is selected
             while True:
                 # Prepare data for one iteration based on the graph state
-                edge_type_mask_sparse, edge_mask_sparse = generate_mask(valences, incre_adj_list, color,
-                                                                        real_n_vertices, node_in_focus,
-                                                                        self.params["check_overlap_edge"], new_mol)
-                edge_type_mask = edge_type_masks_to_dense([edge_type_mask_sparse], max_n_vertices,
-                                                          self.num_edge_types)  # [1, e, v]
+                edge_type_mask_sparse, edge_mask_sparse = generate_mask(valences=valences, adj_mat=incre_adj_list,
+                                                                        color=color, real_n_vertices=real_n_vertices,
+                                                                        node_in_focus=node_in_focus)
+                edge_type_mask = edge_type_masks_to_dense([edge_type_mask_sparse], max_n_vertices, self.num_edge_types)  # [1, e, v]
                 edge_mask = edge_masks_to_dense([edge_mask_sparse], max_n_vertices)  # [1, v]
                 node_sequence = node_sequence_to_dense([node_in_focus], max_n_vertices)  # [1, v]
                 distance_to_others_sparse = bfs_distance(node_in_focus, incre_adj_list)
                 distance_to_others = distance_to_others_dense([distance_to_others_sparse], max_n_vertices)  # [1, v]
-                # overlapped_edge_sparse = get_overlapped_edge_feature(edge_mask_sparse, color, new_mol)
-                #
-                # overlapped_edge_dense = overlapped_edge_features_to_dense([overlapped_edge_sparse],
-                #                                                           max_n_vertices)  # [1, v]
-                incre_adj_mat = incre_adj_mat_to_dense([incre_adj_list],
-                                                       self.num_edge_types, max_n_vertices)  # [1, e, v, v]
-                sampled_node_symbol_one_hot = self.node_symbol_one_hot(sampled_node_symbol, real_n_vertices,
-                                                                       max_n_vertices)
+                incre_adj_mat = incre_adj_mat_to_dense([incre_adj_list], self.num_edge_types, max_n_vertices)  # [1, e, v, v]
 
                 # get feed_dict
-                feed_dict = self.get_dynamic_feed_dict(elements, [sampled_node_symbol_one_hot],
+                feed_dict = self.get_dynamic_feed_dict(elements, None,
                                                        [incre_adj_mat], max_n_vertices, [distance_to_others],
-                                                       [],
                                                        [node_sequence], [edge_type_mask], [edge_mask],
-                                                       random_normal_states)
+                                                       random_normal_states=random_normal_states)
 
                 # fetch nn predictions
                 fetch_list = [self.ops['edge_predictions'], self.ops['edge_type_predictions']]
@@ -936,7 +776,7 @@ class DenseGGNNChemModel(ChemModel):
         # # Remove unconnected node
         # remove_extra_nodes(new_mol)
         # new_mol = Chem.MolFromSmiles(Chem.MolToSmiles(new_mol))
-        return new_mol, total_log_prob
+        return [], total_log_prob
 
     def gradient_ascent(self, random_normal_states, derivative_z_sampled):
         return random_normal_states + self.params['prior_learning_rate'] * derivative_z_sampled
@@ -952,7 +792,7 @@ class DenseGGNNChemModel(ChemModel):
         for _ in range(self.params['optimization_step']):
             print("Entered!")
             # get current qed and derivative
-            batch_feed_dict = self.get_dynamic_feed_dict(elements, None, None, num_vertices, None,
+            batch_feed_dict = self.get_dynamic_feed_dict(elements, None, None, num_vertices,
                                                          None, None, None, None,
                                                          random_normal_states)
             derivative_z_sampled, l2_loss = self.sess.run(fetch_list, feed_dict=batch_feed_dict)
@@ -970,9 +810,9 @@ class DenseGGNNChemModel(ChemModel):
                                   generated_all_similes, elements, step, count):
         # Get back node symbol predictions
         # Prepare dict
-        node_symbol_batch_feed_dict = self.get_dynamic_feed_dict(elements, None, None,
-                                                                 num_vertices, None, None, None, None, None,
-                                                                 random_normal_states)
+        # node_symbol_batch_feed_dict = self.get_dynamic_feed_dict(elements, None, None,
+        #                                                          num_vertices, None, None, None, None, None,
+        #                                                          random_normal_states)
         # Get predicted node probs
         #predicted_node_symbol_prob = self.get_node_symbol(node_symbol_batch_feed_dict)
         # Node numbers for each graph
@@ -1011,7 +851,7 @@ class DenseGGNNChemModel(ChemModel):
                     new_mol
                 ))
             # record the molecule with largest number of pentagon and hexagonal for zinc and cep
-            elif self.dataset == 'ba':
+            elif self.dataset == 'ba' or self.dataset == 'ba6':
                 all_mol.append((0, total_log_prob, new_mol))
         # select one out
         best_mol = select_best(all_mol)
@@ -1064,7 +904,7 @@ class DenseGGNNChemModel(ChemModel):
                 random_normal_states = self.optimization_over_prior(random_normal_states,
                                                                     maximum_length, generated_all_similes, elements,
                                                                     count)
-                print('random_normal_states',random_normal_states)         
+                #print('random_normal_states',random_normal_states)
                 count += 1
             bucket_counters[bucket] += 1
 
@@ -1117,8 +957,7 @@ class DenseGGNNChemModel(ChemModel):
 
 
 if __name__ == "__main__":
-    args = {}#docopt(__doc__)
-    dataset = "ba"#args.get('--dataset')
+    args = {'dataset':'ba'}#docopt(__doc__)
     evaluation = False
     try:
         model = DenseGGNNChemModel(args)
